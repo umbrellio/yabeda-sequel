@@ -1,6 +1,11 @@
 # frozen_string_literal: true
 
 # Declared outside the example group so it isn't a leaky constant.
+#
+# The pool class is always requested explicitly: Sequel's default depends on the
+# Ruby version (timed_queue from 3.2, threaded before), so relying on the default
+# would make these expectations shift under the CI matrix.
+#
 # :expected_servers is what the reader should report, which is not always
 # pool.servers — see the sharded_single note in PoolReader.
 POOL_CASES = {
@@ -13,11 +18,11 @@ POOL_CASES = {
     max_size: 1, waiting: false, expected_servers: [:default]
   },
   timed_queue: {
-    build: -> { Sequel.mock },
+    build: -> { Sequel.mock(pool_class: :timed_queue) },
     max_size: 4, waiting: true, expected_servers: [:default]
   },
   sharded_timed_queue: {
-    build: -> { Sequel.mock(servers: { slave: {} }) },
+    build: -> { Sequel.mock(pool_class: :sharded_timed_queue, servers: { slave: {} }) },
     max_size: 4, waiting: true, expected_servers: %i[default slave]
   },
   threaded: {
@@ -35,6 +40,11 @@ RSpec.describe Yabeda::Sequel::PoolReader do
     context "with a #{type} pool" do
       let(:db) { expectations[:build].call }
       let(:reader) { described_class.new(db.pool) }
+
+      before do
+        skip("#{type} requires Ruby 3.2+") if type.to_s.include?("timed_queue") &&
+                                              !TIMED_QUEUE_SUPPORTED
+      end
 
       it "exercises the expected pool implementation" do
         expect(db.pool.pool_type).to eq(type)
