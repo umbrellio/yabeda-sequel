@@ -22,6 +22,21 @@ module Yabeda
         @config ||= Config.new
       end
 
+      # Call once per process, after fork. Idempotent.
+      def start!
+        install_instrumentation! if config.instrument_checkouts
+        Sampler.start!
+      end
+
+      # Call before forking, so no sampler thread is mid-sample at fork time.
+      def stop!
+        Sampler.stop!
+      end
+
+      def install_instrumentation!
+        ::Sequel::DATABASES.each { |db| PoolInstrumentation.install!(db) }
+      end
+
       # Metric writes must never surface as application failures.
       def safely
         yield
@@ -36,3 +51,5 @@ end
 # Queue the metric declarations at require time. They are registered when the
 # host application calls Yabeda.configure!.
 Yabeda::Sequel::Metrics.install!
+
+require_relative "sequel/railtie" if defined?(::Rails::Railtie)
