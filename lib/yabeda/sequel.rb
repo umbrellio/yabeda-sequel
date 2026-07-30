@@ -7,6 +7,7 @@ require_relative "sequel/version"
 require_relative "sequel/config"
 require_relative "sequel/naming"
 require_relative "sequel/pool_reader"
+require_relative "sequel/metrics"
 
 module Yabeda
   # Connection pool and async thread pool metrics for Sequel.
@@ -29,3 +30,7 @@ module Yabeda
     end
   end
 end
+
+# Queue the metric declarations at require time. They are registered when the
+# host application calls Yabeda.configure!.
+Yabeda::Sequel::Metrics.install!
