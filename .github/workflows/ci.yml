@@ -15,8 +15,13 @@ jobs:
         # Sequel ends get a run. The 5.60 column matters: it predates the
         # timed_queue pools entirely, so it exercises the legacy threaded pair
         # even on a Ruby that would otherwise default to timed_queue.
-        ruby: ["3.1", "3.2", "3.3", "3.4"]
+        ruby: ["3.1", "3.2", "3.3", "3.4", "4.0"]
         sequel: ["5.60.0", "latest"]
+        exclude:
+          # Sequel 5.60 predates Ruby 4.0 by years and nobody pairs them; the
+          # 4.0 column is here because that is what the primary consumer runs.
+          - ruby: "4.0"
+            sequel: "5.60.0"
     name: rspec (ruby ${{ matrix.ruby }}, sequel ${{ matrix.sequel }})
     steps:
       - uses: actions/checkout@v4

@@ -1,0 +1,95 @@
+name: Release
+
+# Releases are driven by lib/yabeda/sequel/version.rb: bump it, merge to master,
+# and this tags, publishes to RubyGems, and cuts a GitHub release. Re-running on
+# an already-released version is a no-op.
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check release
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      exists: ${{ steps.check.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          version=$(grep -oP '(?<=VERSION = ")[^"]+' lib/yabeda/sequel/version.rb)
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check if release already exists
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "${{ steps.version.outputs.tag }}" &>/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  gem:
+    name: Build & push gem
+    needs: check
+    if: needs.check.outputs.exists == 'false'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0"
+          bundler-cache: true
+
+      - name: Build gem
+        run: bundle exec rake build
+
+      # The gemspec sets rubygems_mfa_required, so RUBYGEMS_API_KEY must belong to
+      # an account with MFA enabled at the "UI and API" level. Trusted Publishing
+      # would remove the need for a long-lived key entirely.
+      #
+      # Gated on the secret so a repo without it still tags and cuts a GitHub
+      # release — consumers referencing the gem by git ref need only the tag. The
+      # notice below keeps a missing key visible rather than silently skipped.
+      - name: Push to RubyGems
+        if: env.GEM_HOST_API_KEY != ''
+        env:
+          GEM_HOST_API_KEY: ${{ secrets.RUBYGEMS_API_KEY }}
+        run: gem push pkg/*.gem
+
+      - name: Warn when RubyGems publishing is not configured
+        if: env.GEM_HOST_API_KEY == ''
+        env:
+          GEM_HOST_API_KEY: ${{ secrets.RUBYGEMS_API_KEY }}
+        run: |
+          echo "::warning::RUBYGEMS_API_KEY is not set — skipped publishing to \
+          RubyGems. The git tag and GitHub release are still created."
+
+  github-release:
+    name: Create GitHub release
+    needs: [check, gem]
+    if: needs.check.outputs.exists == 'false'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Create release with auto-generated notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "${{ needs.check.outputs.tag }}" \
+            --title "${{ needs.check.outputs.tag }}" \
+            --target "$GITHUB_SHA" \
+            --generate-notes
