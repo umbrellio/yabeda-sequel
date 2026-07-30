@@ -42,8 +42,9 @@ RSpec.describe Yabeda::Sequel::PoolReader do
       let(:reader) { described_class.new(db.pool) }
 
       before do
-        skip("#{type} requires Ruby 3.2+") if type.to_s.include?("timed_queue") &&
-                                              !TIMED_QUEUE_SUPPORTED
+        if type.to_s.include?("timed_queue") && !TIMED_QUEUE_SUPPORTED
+          skip("#{type} needs Ruby 3.2+ and a Sequel that ships it")
+        end
       end
 
       it "exercises the expected pool implementation" do

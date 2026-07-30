@@ -7,9 +7,15 @@ require "fileutils"
 require "yabeda-sequel"
 require "yabeda/rspec"
 
-# Sequel's timed_queue pools need Ruby 3.2+, and its default pool class differs
-# either side of that line — so specs that care request a pool class explicitly.
-TIMED_QUEUE_SUPPORTED = RUBY_VERSION >= "3.2"
+# The timed_queue pools need both Ruby 3.2+ and a Sequel new enough to ship them,
+# so this probes for the capability rather than guessing from either version.
+# Specs that care about a specific pool always request it explicitly, since
+# Sequel's default pool class differs across versions.
+TIMED_QUEUE_SUPPORTED = begin
+  Sequel.mock(pool_class: :timed_queue).pool.pool_type == :timed_queue
+rescue StandardError, LoadError
+  false
+end
 
 RSpec.configure do |config|
   config.disable_monkey_patching!

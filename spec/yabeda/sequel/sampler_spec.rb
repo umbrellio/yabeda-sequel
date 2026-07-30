@@ -32,7 +32,7 @@ RSpec.describe Yabeda::Sequel::Sampler do
     end
 
     it "reports a waiter count on timed_queue pools" do
-      skip("timed_queue requires Ruby 3.2+") unless TIMED_QUEUE_SUPPORTED
+      skip("timed_queue needs Ruby 3.2+ and a Sequel that ships it") unless TIMED_QUEUE_SUPPORTED
       Sequel.mock(database: "shop", pool_class: :timed_queue)
 
       expect { described_class.sample! }

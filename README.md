@@ -118,12 +118,14 @@ Sequel ships six connection pools exposing different subsets of the same data, a
 
 | Pool | `num_waiting` | Per-server `size` |
 |---|---|---|
-| `timed_queue` (default on Ruby 3.2+) | yes | no |
+| `timed_queue` | yes | no |
 | `sharded_timed_queue` | yes | yes |
-| `threaded` (default before Ruby 3.2) | no | no |
+| `threaded` | no | no |
 | `sharded_threaded` | no | yes |
 | `single` | no | no |
 | `sharded_single` | no | no |
+
+The timed-queue pair needs Ruby 3.2+ *and* a Sequel recent enough to ship it; on older combinations Sequel defaults to the threaded pair. The gem detects what the pool can actually do rather than inferring it from either version, so both eras work.
 
 `connection_pool_waiting` is simply absent on pools that don't track waiters. There are deliberately no `busy` / `idle` gauges: on the timed-queue pools those are only reachable through instance variables, and the public readers on the legacy pools are already marked for removal in Sequel 6.
 
