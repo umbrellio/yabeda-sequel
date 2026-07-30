@@ -1,0 +1,8 @@
+inherit_gem:
+  rubocop-config-umbrellio: application.yml
+
+AllCops:
+  TargetRubyVersion: 3.1
+  NewCops: enable
+  Exclude:
+    - vendor/**/*
