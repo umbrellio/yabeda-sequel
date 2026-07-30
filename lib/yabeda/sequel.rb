@@ -8,6 +8,7 @@ require_relative "sequel/config"
 require_relative "sequel/naming"
 require_relative "sequel/pool_reader"
 require_relative "sequel/metrics"
+require_relative "sequel/pool_instrumentation"
 require_relative "sequel/sampler"
 
 module Yabeda
