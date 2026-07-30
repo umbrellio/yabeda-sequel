@@ -37,7 +37,7 @@ RSpec.describe Yabeda::Sequel::Config do
 
   it "accepts a custom error handler" do
     config = described_class.new
-    config.error_handler = ->(error) { error }
+    config.error_handler = -> (error) { error }
     expect(config.error_handler.call(:boom)).to eq(:boom)
   end
 end

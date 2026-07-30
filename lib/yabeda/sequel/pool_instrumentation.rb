@@ -17,15 +17,20 @@ module Yabeda
     # `acquire` is only reached for genuine acquisitions.
     module PoolInstrumentation
       class << self
+        def installed?(db)
+          pool = db.pool
+          pool.respond_to?(:singleton_class) && pool.singleton_class.ancestors.include?(self)
+        end
+
         def install!(db)
           pool = db.pool
-          return false unless PoolReader.supported?(pool)
-          return false if pool.frozen?
-          return false if pool.singleton_class.ancestors.include?(self)
+          return unless PoolReader.supported?(pool)
+          return if pool.frozen?
+          return if installed?(db)
 
           pool.instance_variable_set(:@yabeda_sequel_db, Naming.call(db))
           pool.singleton_class.prepend(self)
-          true
+          nil
         end
       end
 

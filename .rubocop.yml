@@ -1,8 +1,24 @@
 inherit_gem:
-  rubocop-config-umbrellio: application.yml
+  rubocop-config-umbrellio:
+    - lib/rubocop.yml
+    - lib/rubocop.rspec.yml
+    - lib/rubocop.sequel.yml
 
 AllCops:
+  DisplayCopNames: true
   TargetRubyVersion: 3.1
+  SuggestExtensions: false
   NewCops: enable
   Exclude:
     - vendor/**/*
+    - tmp/**/*
+
+Naming/FileName:
+  Exclude:
+    # RubyGems requires the entry point to match the dashed gem name.
+    - lib/yabeda-sequel.rb
+
+Metrics/MethodLength:
+  Exclude:
+    # A flat declarative list of metrics; splitting it would only obscure it.
+    - lib/yabeda/sequel/metrics.rb

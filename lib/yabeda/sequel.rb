@@ -52,4 +52,4 @@ end
 # host application calls Yabeda.configure!.
 Yabeda::Sequel::Metrics.install!
 
-require_relative "sequel/railtie" if defined?(::Rails::Railtie)
+require_relative "sequel/railtie" if defined?(Rails::Railtie)

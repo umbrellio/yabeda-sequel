@@ -16,8 +16,7 @@ RSpec.describe Yabeda::Sequel do
 
       described_class.start!
 
-      # A second install returns false only if the first one took effect.
-      expect(Yabeda::Sequel::PoolInstrumentation.install!(db)).to be(false)
+      expect(Yabeda::Sequel::PoolInstrumentation).to be_installed(db)
     end
 
     it "skips instrumentation when the kill switch is off" do
@@ -26,7 +25,7 @@ RSpec.describe Yabeda::Sequel do
 
       described_class.start!
 
-      expect(Yabeda::Sequel::PoolInstrumentation.install!(db)).to be(true)
+      expect(Yabeda::Sequel::PoolInstrumentation).not_to be_installed(db)
     ensure
       described_class.config.instrument_checkouts = true
     end
@@ -39,21 +38,22 @@ RSpec.describe Yabeda::Sequel do
 
     it "routes an error to the handler instead of raising" do
       errors = []
-      described_class.config.error_handler = ->(error) { errors << error }
+      described_class.config.error_handler = -> (error) { errors << error }
 
       expect { described_class.safely { raise "nope" } }.not_to raise_error
       expect(errors.map(&:message)).to eq(["nope"])
     end
 
     it "returns nil when the block failed" do
-      described_class.config.error_handler = ->(_error) { nil }
+      described_class.config.error_handler = -> (_error) {}
       expect(described_class.safely { raise "nope" }).to be_nil
     end
   end
 
   describe ".config" do
-    it "is memoized" do
-      expect(described_class.config).to be(described_class.config)
+    it "returns the same instance on repeat calls" do
+      memoized = described_class.config
+      expect(described_class.config).to be(memoized)
     end
   end
 end

@@ -3,25 +3,33 @@
 RSpec.describe Yabeda::Sequel::PoolInstrumentation do
   describe ".install!" do
     it "installs onto a pool" do
-      expect(described_class.install!(Sequel.mock)).to be(true)
-    end
-
-    it "does not install twice onto the same pool" do
       db = Sequel.mock
       described_class.install!(db)
-      expect(described_class.install!(db)).to be(false)
+      expect(described_class).to be_installed(db)
+    end
+
+    it "does not prepend twice onto the same pool" do
+      db = Sequel.mock
+      2.times { described_class.install!(db) }
+
+      prepended = db.pool.singleton_class.ancestors.count { |mod| mod == described_class }
+      expect(prepended).to eq(1)
     end
 
     it "refuses a frozen pool rather than raising" do
       db = Sequel.mock
       db.pool.freeze
-      expect(described_class.install!(db)).to be(false)
+
+      expect { described_class.install!(db) }.not_to raise_error
+      expect(described_class).not_to be_installed(db)
     end
 
     it "refuses an unsupported pool object" do
       db = Sequel.mock
       allow(db).to receive(:pool).and_return(Object.new)
-      expect(described_class.install!(db)).to be(false)
+
+      expect { described_class.install!(db) }.not_to raise_error
+      expect(described_class).not_to be_installed(db)
     end
   end
 
@@ -75,8 +83,8 @@ RSpec.describe Yabeda::Sequel::PoolInstrumentation do
       error = db.synchronize do
         thread = Thread.new do
           db.synchronize { nil }
-        rescue ::Sequel::PoolTimeout => e
-          e
+        rescue Sequel::PoolTimeout => error
+          error
         end
         thread.report_on_exception = false
         thread.value
@@ -93,7 +101,7 @@ RSpec.describe Yabeda::Sequel::PoolInstrumentation do
       db = Sequel.mock(database: "shop")
       described_class.install!(db)
       errors = []
-      Yabeda::Sequel.config.error_handler = ->(error) { errors << error }
+      Yabeda::Sequel.config.error_handler = -> (error) { errors << error }
       allow(Yabeda.sequel.connection_pool_wait).to receive(:measure).and_raise("metrics down")
 
       expect { db.synchronize { nil } }.not_to raise_error

@@ -32,7 +32,7 @@ RSpec.describe Yabeda::Sequel::Sampler do
 
     it "keeps looping after an error and reports it" do
       errors = Queue.new
-      Yabeda::Sequel.config.error_handler = ->(error) { errors << error }
+      Yabeda::Sequel.config.error_handler = -> (error) { errors << error }
       allow(described_class).to receive(:sample!).and_raise(RuntimeError, "boom")
 
       described_class.start!

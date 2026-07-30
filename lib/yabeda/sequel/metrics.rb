@@ -18,32 +18,41 @@ module Yabeda
         def install!
           Yabeda.configure do
             group :sequel do
-              gauge :connection_pool_processes, tags: DB_TAGS, aggregation: :sum,
+              gauge :connection_pool_processes,
+                    tags: DB_TAGS, aggregation: :sum,
                     comment: "Processes reporting pool metrics for this database"
 
-              gauge :connection_pool_connections, tags: POOL_TAGS, aggregation: :sum,
+              gauge :connection_pool_connections,
+                    tags: POOL_TAGS, aggregation: :sum,
                     comment: "Connections currently open in the pool"
 
-              gauge :connection_pool_size, tags: POOL_TAGS, aggregation: :sum,
-                    comment: "Maximum connections the pool is allowed to open"
+              gauge :connection_pool_size,
+                    tags: POOL_TAGS, aggregation: :sum,
+                    comment: "Maximum connections the pool may open"
 
-              gauge :connection_pool_waiting, tags: POOL_TAGS, aggregation: :sum,
-                    comment: "Threads currently waiting to check out a connection"
+              gauge :connection_pool_waiting,
+                    tags: POOL_TAGS, aggregation: :sum,
+                    comment: "Threads waiting to check out a connection"
 
-              histogram :connection_pool_wait, tags: POOL_TAGS, unit: :seconds,
-                        buckets: Yabeda::Sequel.config.wait_buckets, aggregation: :sum,
+              histogram :connection_pool_wait,
+                        tags: POOL_TAGS, unit: :seconds, aggregation: :sum,
+                        buckets: Yabeda::Sequel.config.wait_buckets,
                         comment: "Time spent waiting to check out a connection"
 
-              counter :connection_pool_timeouts_total, tags: POOL_TAGS, aggregation: :sum,
+              counter :connection_pool_timeouts_total,
+                      tags: POOL_TAGS, aggregation: :sum,
                       comment: "Checkouts that failed with Sequel::PoolTimeout"
 
-              gauge :async_pool_threads, tags: DB_TAGS, aggregation: :sum,
+              gauge :async_pool_threads,
+                    tags: DB_TAGS, aggregation: :sum,
                     comment: "Live threads in the async query thread pool"
 
-              gauge :async_pool_queue, tags: DB_TAGS, aggregation: :sum,
+              gauge :async_pool_queue,
+                    tags: DB_TAGS, aggregation: :sum,
                     comment: "Tasks queued in the async query thread pool"
 
-              gauge :async_pool_max_threads, tags: DB_TAGS, aggregation: :sum,
+              gauge :async_pool_max_threads,
+                    tags: DB_TAGS, aggregation: :sum,
                     comment: "Maximum threads the async query thread pool may run"
             end
           end

@@ -21,7 +21,7 @@ module Yabeda
       attr_writer :error_handler
 
       def error_handler
-        @error_handler ||= ->(error) { warn("[yabeda-sequel] #{error.class}: #{error.message}") }
+        @error_handler ||= -> (error) { warn("[yabeda-sequel] #{error.class}: #{error.message}") }
       end
     end
   end

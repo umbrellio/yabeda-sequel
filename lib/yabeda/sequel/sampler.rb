@@ -37,7 +37,7 @@ module Yabeda
             @pid = nil
             shutdown(thread) if thread
           end
-          true
+          nil
         end
 
         def running?
