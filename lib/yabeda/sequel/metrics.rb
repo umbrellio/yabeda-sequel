@@ -39,6 +39,10 @@ module Yabeda
                         buckets: Yabeda::Sequel.config.wait_buckets,
                         comment: "Time spent waiting to check out a connection"
 
+              counter :connection_pool_busy_seconds_total,
+                      tags: POOL_TAGS, aggregation: :sum,
+                      comment: "Seconds connections spent checked out of the pool"
+
               counter :connection_pool_timeouts_total,
                       tags: POOL_TAGS, aggregation: :sum,
                       comment: "Checkouts that failed with Sequel::PoolTimeout"

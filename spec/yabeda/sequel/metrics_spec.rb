@@ -5,6 +5,7 @@ RSpec.describe Yabeda::Sequel::Metrics do
     %i[
       connection_pool_processes connection_pool_connections connection_pool_size
       connection_pool_waiting connection_pool_wait connection_pool_timeouts_total
+      connection_pool_busy_seconds_total
       async_pool_threads async_pool_queue async_pool_max_threads
     ].each do |name|
       expect(Yabeda.sequel.send(name).aggregation).to eq(:sum), "#{name} must aggregate by sum"
@@ -32,6 +33,12 @@ RSpec.describe Yabeda::Sequel::Metrics do
 
   it "declares timeouts as a counter carrying its own _total suffix" do
     expect(Yabeda.sequel.connection_pool_timeouts_total).to be_a(Yabeda::Counter)
+  end
+
+  it "declares busy seconds as a counter tagged by pool" do
+    metric = Yabeda.sequel.connection_pool_busy_seconds_total
+    expect(metric).to be_a(Yabeda::Counter)
+    expect(metric.tags).to contain_exactly(:db, :server)
   end
 
   # Adapters build the exported name as [group, name, unit].compact.join("_").

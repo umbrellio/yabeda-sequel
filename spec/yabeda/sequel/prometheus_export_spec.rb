@@ -25,6 +25,20 @@ RSpec.describe "Prometheus export" do
         .to eq(:sequel_connection_pool_timeouts_total)
     end
 
+    it "exports busy seconds with its explicit unit and counter suffix" do
+      registry = Prometheus::Client::Registry.new
+      allow(adapter).to receive(:registry).and_return(registry)
+      metric = Yabeda.sequel.connection_pool_busy_seconds_total
+      adapter.register_counter!(metric)
+      adapter.perform_counter_increment!(metric, { db: "shop", server: "slave" }, 2.5)
+
+      output = Prometheus::Client::Formats::Text.marshal(registry)
+      expect(output).to include("# TYPE sequel_connection_pool_busy_seconds_total counter")
+      expect(output).to include(
+        'sequel_connection_pool_busy_seconds_total{db="shop",server="slave"} 2.5',
+      )
+    end
+
     it "prefixes every metric with the group name" do
       Yabeda.metrics.each_value do |metric|
         next unless metric.group == :sequel

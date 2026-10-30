@@ -17,6 +17,13 @@ rescue StandardError, LoadError
   false
 end
 
+TEMPORARY_RELEASE_SUPPORTED = begin
+  Sequel.extension(:temporarily_release_connection)
+  true
+rescue LoadError
+  false
+end
+
 RSpec.configure do |config|
   config.disable_monkey_patching!
   config.expect_with(:rspec) { |expectations| expectations.syntax = :expect }

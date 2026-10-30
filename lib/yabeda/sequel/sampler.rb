@@ -96,6 +96,7 @@ module Yabeda
           pool = db.pool
           return unless PoolReader.supported?(pool)
 
+          pool.yabeda_sequel_flush_busy_time if pool.respond_to?(:yabeda_sequel_flush_busy_time)
           reader = PoolReader.new(pool)
           db_tag = Naming.call(db)
 
