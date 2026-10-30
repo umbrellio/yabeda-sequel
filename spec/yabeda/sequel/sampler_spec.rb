@@ -6,6 +6,28 @@ RSpec.describe Yabeda::Sequel::Sampler do
   after { Sequel::DATABASES.clear }
 
   describe ".sample!" do
+    %i[threaded sharded_threaded].each do |pool_class|
+      it "flushes #{pool_class} busy time outside Sequel's mutex, once" do
+        db = Sequel.mock(database: "shop", pool_class: pool_class)
+        Yabeda::Sequel::PoolInstrumentation.install!(db)
+        clock = 10.0
+        allow(Process).to receive(:clock_gettime).and_call_original
+        allow(Process).to receive(:clock_gettime).with(Process::CLOCK_MONOTONIC) { clock }
+        metric = Yabeda.sequel.connection_pool_busy_seconds_total
+        locked = []
+        allow(metric).to receive(:increment).and_wrap_original do |original, *args|
+          locked << db.pool.instance_variable_get(:@mutex).owned?
+          original.call(*args)
+        end
+        db.synchronize { clock += 2 }
+        2.times { described_class.sample! }
+
+        expect(locked).to eq([false])
+        increments = Yabeda::TestAdapter.instance.counters[metric]
+        expect(increments[{ db: "shop", server: "default" }]).to eq(2)
+      end
+    end
+
     it "reports connections per server" do
       db = Sequel.mock(database: "shop", servers: { slave: {} })
       db.synchronize { nil }

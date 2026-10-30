@@ -19,9 +19,21 @@ module Yabeda
 
           pool.instance_variable_set(:@yabeda_sequel_db, Naming.call(db))
           pool.instance_variable_set(:@yabeda_sequel_timers, CheckoutTimers.new)
+          pool.instance_variable_set(:@yabeda_sequel_defer_busy_metrics,
+                                     %i[threaded sharded_threaded].include?(pool.pool_type))
           pool.singleton_class.prepend(self)
           nil
         end
+      end
+
+      # Legacy pools call release under their mutex; the sampler writes outside it.
+      def yabeda_sequel_flush_busy_time
+        return unless Yabeda.configured?
+
+        @yabeda_sequel_timers.drain.each do |server, elapsed|
+          yabeda_sequel_measure_busy(server, elapsed)
+        end
+        nil
       end
 
       private
@@ -53,17 +65,19 @@ module Yabeda
       end
 
       def release(*args)
-        started_at = @yabeda_sequel_timers.finish(args[0], args[2])
-        released_at = Process.clock_gettime(Process::CLOCK_MONOTONIC) if started_at
+        released_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        deferred_at = released_at if @yabeda_sequel_defer_busy_metrics && Yabeda.configured?
+        started_at = @yabeda_sequel_timers.finish(args[0], args[2], finished_at: deferred_at)
         super
       ensure
-        yabeda_sequel_measure_busy(args[2], started_at, released_at)
+        if started_at && !@yabeda_sequel_defer_busy_metrics
+          yabeda_sequel_measure_busy(args[2], released_at - started_at)
+        end
       end
 
-      def yabeda_sequel_measure_busy(server, started_at, finished_at)
-        return unless started_at && Yabeda.configured?
+      def yabeda_sequel_measure_busy(server, elapsed)
+        return unless Yabeda.configured?
 
-        elapsed = finished_at - started_at
         Yabeda::Sequel.safely do
           Yabeda.sequel.connection_pool_busy_seconds_total.increment(
             yabeda_sequel_tags(server), by: elapsed

@@ -155,6 +155,11 @@ RSpec.describe "Connection busy time" do
       let(:clock) { [10.0] }
       let(:disconnect_total) { pool_class == :sharded_threaded ? 5 : 3 }
 
+      def busy_seconds(tags)
+        db.pool.yabeda_sequel_flush_busy_time
+        increments[tags]
+      end
+
       before do
         Yabeda::Sequel::PoolInstrumentation.install!(db)
         allow(Process).to receive(:clock_gettime).and_call_original
@@ -170,7 +175,7 @@ RSpec.describe "Connection busy time" do
 
         db.synchronize { clock[0] += 2.5 }
 
-        expect(increments[tags]).to eq(2.5)
+        expect(busy_seconds(tags)).to eq(2.5)
         waits = Yabeda::TestAdapter.instance.histograms[Yabeda.sequel.connection_pool_wait]
         expect(waits[tags]).to eq(3)
         expect(entries).to be_empty
@@ -180,11 +185,11 @@ RSpec.describe "Connection busy time" do
         db.synchronize do
           clock[0] += 1
           db.synchronize { clock[0] += 2 }
-          expect(increments[tags]).to eq(0)
+          expect(busy_seconds(tags)).to eq(0)
           clock[0] += 1
         end
 
-        expect(increments[tags]).to eq(4)
+        expect(busy_seconds(tags)).to eq(4)
       end
 
       it "does not take the timer mutex for nested holds" do
@@ -217,7 +222,7 @@ RSpec.describe "Connection busy time" do
         2.times { finish.push(true) }
         threads.each(&:value)
 
-        expect(increments[tags]).to eq(6)
+        expect(busy_seconds(tags)).to eq(6)
         expect(entries).to be_empty
       ensure
         threads&.each { |thread| thread.kill.join }
@@ -230,7 +235,7 @@ RSpec.describe "Connection busy time" do
         clock[0] += 3
         fibers.each(&:resume)
 
-        expect(increments[tags]).to eq(6)
+        expect(busy_seconds(tags)).to eq(6)
         expect(entries).to be_empty
       end
 
@@ -243,7 +248,7 @@ RSpec.describe "Connection busy time" do
           false
         end
         db.synchronize { clock[0] += 2 }
-        expect(increments[tags]).to eq(3)
+        expect(busy_seconds(tags)).to eq(3)
         expect(entries).to be_empty
 
         allow(db).to receive(:valid_connection?).and_raise("validation failed")
@@ -266,7 +271,7 @@ RSpec.describe "Connection busy time" do
         end
 
         expect(second).not_to equal(first)
-        expect(increments[tags]).to eq(3)
+        expect(busy_seconds(tags)).to eq(3)
         expect(entries).to be_empty
       end
 
@@ -278,7 +283,7 @@ RSpec.describe "Connection busy time" do
           end
         end.to raise_error(RuntimeError, "query failed")
 
-        expect(increments[tags]).to eq(2)
+        expect(busy_seconds(tags)).to eq(2)
         expect(entries).to be_empty
       end
 
@@ -293,7 +298,7 @@ RSpec.describe "Connection busy time" do
         clock[0] += 100
         db.synchronize { clock[0] += 3 }
 
-        expect(increments[tags]).to eq(disconnect_total)
+        expect(busy_seconds(tags)).to eq(disconnect_total)
         expect(entries).to be_empty
       end
 
@@ -308,7 +313,7 @@ RSpec.describe "Connection busy time" do
           allow(Yabeda).to receive(:configured?).and_return(true)
         end
 
-        expect(increments[tags]).to eq(0)
+        expect(busy_seconds(tags)).to eq(0)
         expect(entries).to be_empty
       end
 
@@ -321,6 +326,7 @@ RSpec.describe "Connection busy time" do
           clock[0] += 1
           :result
         end).to eq(:result)
+        db.pool.yabeda_sequel_flush_busy_time
         expect(errors.map(&:message)).to eq(["counter down"])
         expect(entries).to be_empty
       end
@@ -332,7 +338,7 @@ RSpec.describe "Connection busy time" do
           allow(Yabeda).to receive(:configured?).and_return(true)
         end
 
-        expect(increments[tags]).to eq(0)
+        expect(busy_seconds(tags)).to eq(0)
         expect(entries).to be_empty
       end
 
@@ -345,7 +351,7 @@ RSpec.describe "Connection busy time" do
         allow(Yabeda).to receive(:configured?).and_return(true)
         db.synchronize { clock[0] += 1 }
 
-        expect(increments[tags]).to eq(1)
+        expect(busy_seconds(tags)).to eq(1)
       end
 
       it "does not report a parent's checkout in a forked child" do
@@ -356,9 +362,9 @@ RSpec.describe "Connection busy time" do
               clock[0] += 1000
               args = sharded ? [Sequel.current, connection, :default] : [Sequel.current]
               db.pool.send(:release, *args)
-              writer.write("#{increments[tags]},")
+              writer.write("#{busy_seconds(tags)},")
               db.synchronize { clock[0] += 3 }
-              writer.write(increments[tags].to_s)
+              writer.write(busy_seconds(tags).to_s)
               writer.close
               exit!(0)
             end
@@ -369,7 +375,7 @@ RSpec.describe "Connection busy time" do
           end
         end
 
-        expect(increments[tags]).to eq(2)
+        expect(busy_seconds(tags)).to eq(2)
       end
 
       context "with one connection" do
@@ -389,7 +395,7 @@ RSpec.describe "Connection busy time" do
           db.synchronize { clock[0] += 1 }
 
           expect(entries).to be_empty
-          expect(increments[tags]).to eq(2)
+          expect(busy_seconds(tags)).to eq(2)
         end
 
         it "prunes dead owners no more than once per sample interval" do
@@ -404,7 +410,7 @@ RSpec.describe "Connection busy time" do
           db.synchronize { nil }
 
           expect(entries).to be_empty
-          expect(increments[tags]).to eq(0)
+          expect(busy_seconds(tags)).to eq(0)
         end
 
         it "counts temporary releases as separate intervals" do
@@ -418,8 +424,25 @@ RSpec.describe "Connection busy time" do
             clock[0] += 2
           end
 
-          expect(increments[tags]).to eq(5)
+          expect(busy_seconds(tags)).to eq(5)
           expect(entries).to be_empty
+        end
+
+        it "keeps timing after a temporary release inside a nested hold" do
+          skip "Temporary releases are unavailable" unless TEMPORARY_RELEASE_SUPPORTED
+
+          db.extension(:temporarily_release_connection)
+          db.synchronize do |connection|
+            clock[0] += 1
+            db.synchronize do
+              clock[0] += 1
+              db.temporarily_release_connection(connection) { clock[0] += 100 }
+              clock[0] += 2
+            end
+            clock[0] += 3
+          end
+
+          expect(busy_seconds(tags)).to eq(7)
         end
 
         it "never carries disconnected time across a temporary reacquisition" do
@@ -438,7 +461,7 @@ RSpec.describe "Connection busy time" do
           clock[0] += 100
           db.synchronize { clock[0] += 3 }
 
-          expect(increments[tags]).to eq(pool_class == :sharded_threaded ? 8 : 5)
+          expect(busy_seconds(tags)).to eq(pool_class == :sharded_threaded ? 8 : 5)
           expect(entries).to be_empty
         end
       end
@@ -451,8 +474,8 @@ RSpec.describe "Connection busy time" do
             clock[0] += 1
           end
 
-          expect(increments[tags]).to eq(4)
-          expect(increments[{ db: "shop", server: "slave" }]).to eq(2)
+          expect(busy_seconds(tags)).to eq(4)
+          expect(busy_seconds(db: "shop", server: "slave")).to eq(2)
         end
       end
     end
