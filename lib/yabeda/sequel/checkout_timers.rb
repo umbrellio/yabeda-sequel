@@ -2,84 +2,44 @@
 
 module Yabeda
   module Sequel
-    # Hold scopes survive temporary releases but isolate nested checkouts.
-    # This mutex never takes a Sequel pool lock.
+    # Never takes a Sequel pool lock while holding the bookkeeping mutex.
     class CheckoutTimers
-      State = Struct.new(:holds, :checkouts)
-      Hold = Struct.new(:owner, :checkouts)
-      Checkout = Struct.new(:server, :started_at, :hold)
-
       def initialize
         @mutex = Mutex.new
         @pid = Process.pid
-        @states = {}.compare_by_identity
-      end
-
-      def enter(owner)
-        synchronize do
-          hold = Hold.new(owner, {})
-          state(owner).holds.push(hold)
-          hold
-        end
-      end
-
-      def leave(hold)
-        synchronize do
-          current = @states[hold.owner]
-          next [] unless current && current.holds.last.equal?(hold)
-
-          current.holds.pop
-          checkouts = hold.checkouts.keys.map { |server| remove(current, server) }
-          cleanup(hold.owner, current)
-          checkouts
-        end
+        @checkouts = {}.compare_by_identity
+        @next_prune_at = 0
       end
 
       def start(owner, server, started_at)
         synchronize do
-          @states.delete_if { |thread, _| !thread.alive? }
-          current = state(owner)
-          remove(current, server)
-          checkout = Checkout.new(server, started_at, current.holds.last)
-          current.checkouts[server] = checkout
-          checkout.hold.checkouts[server] = checkout if checkout.hold
+          if started_at >= @next_prune_at
+            @checkouts.delete_if { |thread, _| !thread.alive? }
+            @next_prune_at = started_at + Yabeda::Sequel.config.sample_interval.to_f
+          end
+          (@checkouts[owner] ||= {})[server] = started_at
         end
       end
 
       def finish(owner, server)
         synchronize do
-          current = @states[owner]
-          next unless current
+          timers = @checkouts[owner]
+          next unless timers
 
-          checkout = remove(current, server)
-          cleanup(owner, current)
-          checkout
+          started_at = timers.delete(server)
+          @checkouts.delete(owner) if timers.empty?
+          started_at
         end
       end
 
       private
 
-      def state(owner)
-        @states[owner] ||= State.new([], {})
-      end
-
-      def remove(current, server)
-        checkout = current.checkouts.delete(server)
-        return unless checkout
-
-        checkout.hold&.checkouts&.delete(server)
-        checkout
-      end
-
-      def cleanup(owner, current)
-        @states.delete(owner) if current.holds.empty? && current.checkouts.empty?
-      end
-
       def synchronize
         @mutex.synchronize do
           # Forked children must never finish a parent's checkout.
           if @pid != Process.pid
-            @states.clear
+            @checkouts.clear
+            @next_prune_at = 0
             @pid = Process.pid
           end
           yield

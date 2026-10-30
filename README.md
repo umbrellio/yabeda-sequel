@@ -70,7 +70,7 @@ Use the busy-time counter to measure pool use. `rate(sequel_connection_pool_busy
 sum by (job) (rate(sequel_connection_pool_busy_seconds_total[5m])) / sum by (job) (sequel_connection_pool_size)
 ```
 
-Busy time starts when acquisition returns a connection, so it excludes checkout wait time. It is recorded on release: a long transaction held for minutes appears as a spike at release time, rather than contributing continuously while held. Disconnect paths that bypass release are counted when the enclosing hold exits. Abandoned checkouts from dead threads or Fibers are dropped when another checkout starts, and inherited timers are discarded after fork. Temporary releases count each held interval separately.
+Busy time starts when acquisition returns a connection, so it excludes checkout wait time. It is recorded on release: a long transaction held for minutes appears as a spike at release time, rather than contributing continuously while held. Disconnect paths that bypass `release` are not counted: their stale timers are overwritten by the owner's next acquisition, so that time never carries into a later checkout. Dead-owner timers are pruned on acquisition at most once per `sample_interval`, and inherited timers are discarded after fork. There is no dedicated handling for `temporarily_release_connection`; where the extension calls `release` and `acquire`, each held interval is counted separately and the temporarily released interval is excluded.
 
 Actual saturation — is anything being starved — comes from elsewhere:
 
@@ -144,7 +144,7 @@ The timed-queue pair needs Ruby 3.2+ *and* a Sequel recent enough to ship it; on
 
 **Ruby 4.0 and `DirectFileStore`.** `prometheus-client` calls `CGI.parse`, which moved from `cgi` to `cgi/core` in Ruby 4.0. A Rails host loads it transitively; a bare process may need `require "cgi/core"`.
 
-**`acquire` and `release` are private Sequel API.** The wait histogram and timeout counter prepend the pool's singleton class around `acquire`; the busy-time counter also wraps `release`, with `hold` cleanup for disconnects that bypass it. The specs pin their signatures and behavior across the threaded and timed-queue pools and their sharded variants, so incompatible Sequel changes fail CI rather than silently flatlining a metric. If you're ever bitten by it, set `instrument_checkouts` to `false` — the sampled metrics keep working.
+**`acquire` and `release` are private Sequel API.** The wait histogram and timeout counter prepend the pool's singleton class around `acquire`; the busy-time counter also wraps `release`. Nested holds bypass both hooks and incur no bookkeeping. The specs pin their signatures and behavior across the threaded and timed-queue pools and their sharded variants, so incompatible Sequel changes fail CI rather than silently flatlining a metric. If you're ever bitten by it, set `instrument_checkouts` to `false` — the sampled metrics keep working.
 
 **Orphaned store files.** If a worker crashes, its `DirectFileStore` file keeps contributing until the pod or host is replaced. Absolute counts drift high; ratios stay honest because numerator and denominator inflate together.
 

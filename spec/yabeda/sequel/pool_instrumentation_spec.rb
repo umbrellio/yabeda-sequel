@@ -151,8 +151,9 @@ RSpec.describe "Connection busy time" do
       let(:tags) { { db: "shop", server: "default" } }
       let(:increments) { Yabeda::TestAdapter.instance.counters[metric] }
       let(:timers) { db.pool.instance_variable_get(:@yabeda_sequel_timers) }
-      let(:entries) { timers.instance_variable_get(:@states) }
+      let(:entries) { timers.instance_variable_get(:@checkouts) }
       let(:clock) { [10.0] }
+      let(:disconnect_total) { pool_class == :sharded_threaded ? 5 : 3 }
 
       before do
         Yabeda::Sequel::PoolInstrumentation.install!(db)
@@ -184,6 +185,20 @@ RSpec.describe "Connection busy time" do
         end
 
         expect(increments[tags]).to eq(4)
+      end
+
+      it "does not take the timer mutex for nested holds" do
+        calls = []
+        mutex = timers.instance_variable_get(:@mutex)
+        allow(mutex).to receive(:synchronize).and_wrap_original do |original, &block|
+          calls << true
+          original.call(&block)
+        end
+        db.synchronize do
+          before_nested = calls.size
+          db.synchronize { nil }
+          expect(calls.size).to eq(before_nested)
+        end
       end
 
       it "counts concurrent owners independently" do
@@ -267,7 +282,7 @@ RSpec.describe "Connection busy time" do
         expect(entries).to be_empty
       end
 
-      it "finishes disconnected checkouts before timing the next one" do
+      it "never attributes disconnected checkout time to the next checkout" do
         expect do
           db.synchronize do
             clock[0] += 2
@@ -275,11 +290,25 @@ RSpec.describe "Connection busy time" do
           end
         end.to raise_error(Sequel::DatabaseDisconnectError)
 
-        expect(entries).to be_empty
         clock[0] += 100
         db.synchronize { clock[0] += 3 }
 
-        expect(increments[tags]).to eq(5)
+        expect(increments[tags]).to eq(disconnect_total)
+        expect(entries).to be_empty
+      end
+
+      it "discards stale time when the next acquisition is unconfigured" do
+        expect do
+          db.synchronize { raise Sequel::DatabaseDisconnectError }
+        end.to raise_error(Sequel::DatabaseDisconnectError)
+        clock[0] += 100
+        allow(Yabeda).to receive(:configured?).and_return(false)
+        db.synchronize do
+          clock[0] += 2
+          allow(Yabeda).to receive(:configured?).and_return(true)
+        end
+
+        expect(increments[tags]).to eq(0)
         expect(entries).to be_empty
       end
 
@@ -363,7 +392,24 @@ RSpec.describe "Connection busy time" do
           expect(increments[tags]).to eq(2)
         end
 
+        it "prunes dead owners no more than once per sample interval" do
+          abandoned = Thread.new do
+            args = sharded ? [Sequel.current, :default] : [Sequel.current]
+            db.pool.send(:acquire, *args)
+          end
+          abandoned.value
+          3.times { db.synchronize { nil } }
+          expect(entries.keys).to include(abandoned)
+          clock[0] += Yabeda::Sequel.config.sample_interval
+          db.synchronize { nil }
+
+          expect(entries).to be_empty
+          expect(increments[tags]).to eq(0)
+        end
+
         it "counts temporary releases as separate intervals" do
+          skip "Temporary releases are unavailable" unless TEMPORARY_RELEASE_SUPPORTED
+
           db.extension(:temporarily_release_connection)
           db.synchronize do |connection|
             clock[0] += 2
@@ -376,7 +422,9 @@ RSpec.describe "Connection busy time" do
           expect(entries).to be_empty
         end
 
-        it "cleans up a disconnect after temporarily reacquiring" do
+        it "never carries disconnected time across a temporary reacquisition" do
+          skip "Temporary releases are unavailable" unless TEMPORARY_RELEASE_SUPPORTED
+
           db.extension(:temporarily_release_connection)
           expect do
             db.synchronize do |connection|
@@ -387,7 +435,10 @@ RSpec.describe "Connection busy time" do
             end
           end.to raise_error(Sequel::DatabaseDisconnectError)
 
-          expect(increments[tags]).to eq(5)
+          clock[0] += 100
+          db.synchronize { clock[0] += 3 }
+
+          expect(increments[tags]).to eq(pool_class == :sharded_threaded ? 8 : 5)
           expect(entries).to be_empty
         end
       end

@@ -24,22 +24,13 @@ module Yabeda
         end
       end
 
-      def hold(*)
-        return super unless Yabeda.configured?
-
-        hold = @yabeda_sequel_timers.enter(::Sequel.current)
-        super
-      ensure
-        # Disconnect paths can delete allocations without calling release.
-        if hold
-          @yabeda_sequel_timers.leave(hold).each { |timer| yabeda_sequel_measure_busy(timer) }
-        end
-      end
-
       private
 
       def acquire(*args)
-        return super unless Yabeda.configured?
+        unless Yabeda.configured?
+          @yabeda_sequel_timers.finish(args[0], args[1])
+          return super
+        end
 
         # Sharded pools pass the server second; unsharded ones take no server.
         tags = yabeda_sequel_tags(args[1])
@@ -62,21 +53,20 @@ module Yabeda
       end
 
       def release(*args)
-        checkout = @yabeda_sequel_timers.finish(args[0], args[2])
-        released_at = Process.clock_gettime(Process::CLOCK_MONOTONIC) if checkout
+        started_at = @yabeda_sequel_timers.finish(args[0], args[2])
+        released_at = Process.clock_gettime(Process::CLOCK_MONOTONIC) if started_at
         super
       ensure
-        yabeda_sequel_measure_busy(checkout, released_at)
+        yabeda_sequel_measure_busy(args[2], started_at, released_at)
       end
 
-      def yabeda_sequel_measure_busy(checkout, finished_at = nil)
-        return unless checkout && Yabeda.configured?
+      def yabeda_sequel_measure_busy(server, started_at, finished_at)
+        return unless started_at && Yabeda.configured?
 
-        finished_at ||= Process.clock_gettime(Process::CLOCK_MONOTONIC)
-        elapsed = finished_at - checkout.started_at
+        elapsed = finished_at - started_at
         Yabeda::Sequel.safely do
           Yabeda.sequel.connection_pool_busy_seconds_total.increment(
-            yabeda_sequel_tags(checkout.server), by: elapsed
+            yabeda_sequel_tags(server), by: elapsed
           )
         end
       end
