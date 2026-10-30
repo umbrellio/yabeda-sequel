@@ -41,7 +41,7 @@ Outside Rails, call `Yabeda::Sequel.start!` once per process after any fork. It 
 
 ## Metrics
 
-All gauges are declared with `aggregation: :sum` so they fold across processes.
+All metrics are declared with `aggregation: :sum` so they fold across processes.
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
@@ -50,6 +50,7 @@ All gauges are declared with `aggregation: :sum` so they fold across processes.
 | `sequel_connection_pool_size` | gauge | `db`, `server` | Maximum connections allowed |
 | `sequel_connection_pool_waiting` | gauge | `db`, `server` | Threads waiting for a checkout |
 | `sequel_connection_pool_wait_seconds` | histogram | `db`, `server` | Time spent waiting for a checkout |
+| `sequel_connection_pool_busy_seconds_total` | counter | `db`, `server` | Seconds connections spent checked out of the pool |
 | `sequel_connection_pool_timeouts_total` | counter | `db`, `server` | Checkouts that raised `Sequel::PoolTimeout` |
 | `sequel_async_pool_threads` | gauge | `db` | Live threads in the async query pool |
 | `sequel_async_pool_queue` | gauge | `db` | Tasks queued in the async query pool |
@@ -62,6 +63,14 @@ The `async_pool_*` metrics appear only when the database exposes `async_thread_e
 ### `connections / size` is not saturation
 
 This trips people up, so it's worth stating plainly. Sequel pools grow to their high-water mark and never shrink — there's no idle reaper unless you load one. So `connections / size` climbs to 1.0 after the first busy period and stays there. It is **capacity accounting**: how many connections a process holds against how many it may hold. That's the number you want when reconciling a database's connection count against your fleet.
+
+Use the busy-time counter to measure pool use. `rate(sequel_connection_pool_busy_seconds_total[5m])` is the average number of connections in use over the window; divide by the pool ceiling for the share in use (multiply by 100 for a percentage):
+
+```promql
+sum by (job) (rate(sequel_connection_pool_busy_seconds_total[5m])) / sum by (job) (sequel_connection_pool_size)
+```
+
+Busy time starts when acquisition returns a connection, so it excludes checkout wait time. It is recorded on release: a long transaction held for minutes appears as a spike at release time, rather than contributing continuously while held. Disconnect paths that bypass release are counted when the enclosing hold exits. Abandoned checkouts from dead threads or Fibers are dropped when another checkout starts, and inherited timers are discarded after fork. Temporary releases count each held interval separately.
 
 Actual saturation — is anything being starved — comes from elsewhere:
 
@@ -98,7 +107,7 @@ Via `anyway_config` — environment variables prefixed `YABEDA_SEQUEL_`, or `con
 | Setting | Default | Purpose |
 |---|---|---|
 | `sample_interval` | `5` | Seconds between samples |
-| `instrument_checkouts` | `true` | Kill switch for the wait/timeout instrumentation |
+| `instrument_checkouts` | `true` | Kill switch for wait, timeout, and busy-time instrumentation |
 | `autostart` | `true` | Whether the Railtie starts the sampler |
 | `wait_buckets` | `0.0005 … 5` | Histogram buckets; the top bucket is Sequel's default `pool_timeout` |
 
@@ -127,7 +136,7 @@ Sequel ships six connection pools exposing different subsets of the same data, a
 
 The timed-queue pair needs Ruby 3.2+ *and* a Sequel recent enough to ship it; on older combinations Sequel defaults to the threaded pair. The gem detects what the pool can actually do rather than inferring it from either version, so both eras work.
 
-`connection_pool_waiting` is simply absent on pools that don't track waiters. There are deliberately no `busy` / `idle` gauges: on the timed-queue pools those are only reachable through instance variables, and the public readers on the legacy pools are already marked for removal in Sequel 6.
+`connection_pool_waiting` is simply absent on pools that don't track waiters. There are deliberately no `busy` / `idle` gauges: millisecond checkouts mostly disappear between samples. On the timed-queue pools those counts are also only reachable through instance variables, and the public readers on the legacy pools are already marked for removal in Sequel 6. Use the busy-time counter above to measure average use across a window.
 
 `sharded_single` advertises multiple servers but keeps a single pool-wide size, so it is reported under `server="default"` only rather than double counted.
 
@@ -135,7 +144,7 @@ The timed-queue pair needs Ruby 3.2+ *and* a Sequel recent enough to ship it; on
 
 **Ruby 4.0 and `DirectFileStore`.** `prometheus-client` calls `CGI.parse`, which moved from `cgi` to `cgi/core` in Ruby 4.0. A Rails host loads it transitively; a bare process may need `require "cgi/core"`.
 
-**`acquire` is private Sequel API.** The wait histogram and timeout counter work by prepending the pool's singleton class around `acquire`, which is the only way to observe checkout wait time. The specs pin this so a Sequel release that changes it fails CI rather than silently flatlining the metric. If you're ever bitten by it, set `instrument_checkouts` to `false` — the sampled metrics keep working.
+**`acquire` and `release` are private Sequel API.** The wait histogram and timeout counter prepend the pool's singleton class around `acquire`; the busy-time counter also wraps `release`, with `hold` cleanup for disconnects that bypass it. The specs pin their signatures and behavior across the threaded and timed-queue pools and their sharded variants, so incompatible Sequel changes fail CI rather than silently flatlining a metric. If you're ever bitten by it, set `instrument_checkouts` to `false` — the sampled metrics keep working.
 
 **Orphaned store files.** If a worker crashes, its `DirectFileStore` file keeps contributing until the pod or host is replaced. Absolute counts drift high; ratios stay honest because numerator and denominator inflate together.
 

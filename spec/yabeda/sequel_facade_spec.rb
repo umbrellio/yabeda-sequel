@@ -20,12 +20,18 @@ RSpec.describe Yabeda::Sequel do
     end
 
     it "skips instrumentation when the kill switch is off" do
-      db = Sequel.mock(database: "shop")
+      pools = [:threaded]
+      pools.push(:timed_queue) if TIMED_QUEUE_SUPPORTED
+      databases = pools.map { |pool| Sequel.mock(database: "shop", pool_class: pool) }
       described_class.config.instrument_checkouts = false
 
       described_class.start!
 
-      expect(Yabeda::Sequel::PoolInstrumentation).not_to be_installed(db)
+      databases.each do |db|
+        expect(Yabeda::Sequel::PoolInstrumentation).not_to be_installed(db)
+        expect { db.synchronize { nil } }
+          .not_to increment_yabeda_counter(Yabeda.sequel.connection_pool_busy_seconds_total)
+      end
     ensure
       described_class.config.instrument_checkouts = true
     end

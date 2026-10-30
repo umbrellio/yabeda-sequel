@@ -2,19 +2,8 @@
 
 module Yabeda
   module Sequel
-    # Times connection checkouts.
-    #
-    # Wait time is inherently per-checkout and cannot be sampled, so this is the
-    # one place the gem touches Sequel internals: `acquire` is private API. It has
-    # the same shape on every pool implementation — `acquire(thread)` when
-    # unsharded, `acquire(thread, server)` when sharded — so splatted args plus a
-    # bare `super` covers all of them. The specs pin this behaviour so that a
-    # Sequel release changing `acquire` fails CI rather than silently flatlining
-    # the metric.
-    #
-    # Nested checkouts are not double counted: `hold` returns early via
-    # `owned_connection` when the calling thread already holds a connection, so
-    # `acquire` is only reached for genuine acquisitions.
+    # Sequel's private acquire/release signatures are pinned by the specs.
+    # Nested holds bypass them, so only genuine checkouts start timers.
     module PoolInstrumentation
       class << self
         def installed?(db)
@@ -29,10 +18,25 @@ module Yabeda
           return if installed?(db)
 
           pool.instance_variable_set(:@yabeda_sequel_db, Naming.call(db))
+          pool.instance_variable_set(:@yabeda_sequel_timers, CheckoutTimers.new)
           pool.singleton_class.prepend(self)
           nil
         end
       end
+
+      def hold(*)
+        return super unless Yabeda.configured?
+
+        hold = @yabeda_sequel_timers.enter(::Sequel.current)
+        super
+      ensure
+        # Disconnect paths can delete allocations without calling release.
+        if hold
+          @yabeda_sequel_timers.leave(hold).each { |timer| yabeda_sequel_measure_busy(timer) }
+        end
+      end
+
+      private
 
       def acquire(*args)
         return super unless Yabeda.configured?
@@ -42,19 +46,40 @@ module Yabeda
         started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
         begin
-          super
+          connection = super
+          acquired_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+          @yabeda_sequel_timers.start(args[0], args[1], acquired_at)
+          connection
         rescue ::Sequel::PoolTimeout
           Yabeda::Sequel.safely do
             Yabeda.sequel.connection_pool_timeouts_total.increment(tags)
           end
           raise
         ensure
-          elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at
+          elapsed = (acquired_at || Process.clock_gettime(Process::CLOCK_MONOTONIC)) - started_at
           Yabeda::Sequel.safely { Yabeda.sequel.connection_pool_wait.measure(tags, elapsed) }
         end
       end
 
-      private
+      def release(*args)
+        checkout = @yabeda_sequel_timers.finish(args[0], args[2])
+        released_at = Process.clock_gettime(Process::CLOCK_MONOTONIC) if checkout
+        super
+      ensure
+        yabeda_sequel_measure_busy(checkout, released_at)
+      end
+
+      def yabeda_sequel_measure_busy(checkout, finished_at = nil)
+        return unless checkout && Yabeda.configured?
+
+        finished_at ||= Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        elapsed = finished_at - checkout.started_at
+        Yabeda::Sequel.safely do
+          Yabeda.sequel.connection_pool_busy_seconds_total.increment(
+            yabeda_sequel_tags(checkout.server), by: elapsed
+          )
+        end
+      end
 
       def yabeda_sequel_tags(server)
         { db: @yabeda_sequel_db, server: (server || :default).to_s }

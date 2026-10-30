@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.2.0 (unreleased)
+
+- Add `sequel_connection_pool_busy_seconds_total`, a counter of connection checkout time labelled by database and pool server. Its rate measures average pool use without missing brief checkouts between samples.
+- Track nested, concurrent, sharded, and Fiber-owned checkouts, with disconnect cleanup and fork isolation. Temporary releases count only the held intervals; abandoned checkouts from dead owners are dropped.
+
+## 0.1.0 (2026-07-30)
 
 Initial release.
 
